@@ -1,0 +1,100 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: "Inlämning AWS kurs"
+
+Resources:
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: MyLaunchTemplate
+      LaunchTemplateData:
+        ImageId: ami-096f43ef67d75e998
+        InstanceType: t2.micro
+        KeyName: AWSadmin
+        SecurityGroupIds:
+          - !GetAtt AppSecurityGroup.GroupId
+        UserData:
+          Fn::Base64: !Sub | 
+            #!/bin/bash 
+            yum update -y 
+            amazon-linux-extras install nginx1 -y 
+            systemctl start nginx 
+            systemctl enable nginx 
+            sed -i -e "s/Administrator/Tobbe/g"     /usr/share/nginx/html/index.html 
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow http to client host
+      GroupName: !Sub '${AWS::StackName}--AppSecurityGroup'
+      VpcId: vpc-0cc11e75
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp 
+        FromPort: 80 
+        ToPort: 80 
+        SourceSecurityGroupId: !GetAtt WebSecurityGroup.GroupId 
+
+  WebSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup 
+    Properties: 
+      GroupName: !Sub '${AWS::StackName}-WebSecurityGroup'
+      GroupDescription: Web 
+      SecurityGroupIngress: 
+        - IpProtocol: tcp 
+          FromPort: '80' 
+          ToPort: '80' 
+          CidrIp: 0.0.0.0/0 
+
+  AutoScalingGroup: 
+    Type: AWS::AutoScaling::AutoScalingGroup 
+    Properties: 
+      AutoScalingGroupName: !Sub '${AWS::StackName}-AutoScalingGroup' 
+      DesiredCapacity: "2" 
+      LaunchTemplate: 
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber 
+      MinSize: "1" 
+      MaxSize: "3" 
+      TargetGroupARNs: 
+        - !Ref TargetGroup
+      VPCZoneIdentifier: 
+        - subnet-b75d55d1
+        - subnet-98aee4c2
+        - subnet-cfecf487
+
+  TargetGroup: 
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup' 
+    Properties: 
+      Name: !Sub '${AWS::StackName}-TargetGroup'
+      Port: 80 
+      Protocol: HTTP 
+      VpcId: vpc-0cc11e75
+
+  MyALB: 
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer 
+    Properties: 
+      Name: !Sub '${AWS::StackName}-MyALB'  
+      Scheme: internet-facing 
+      SecurityGroups:
+        - !GetAtt WebSecurityGroup.GroupId
+      Subnets:  
+        - subnet-b75d55d1
+        - subnet-98aee4c2
+        - subnet-cfecf487
+      Type: application 
+      IpAddressType: ipv4 
+
+  Listener: 
+    Type: 'AWS::ElasticLoadBalancingV2::Listener' 
+    Properties: 
+      DefaultActions: 
+        - Type: forward 
+          TargetGroupArn: !Ref TargetGroup 
+      LoadBalancerArn: !Ref MyALB 
+      Port: 80 
+      Protocol: HTTP 
